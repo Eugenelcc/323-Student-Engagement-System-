@@ -1,0 +1,18 @@
+[tool.black]
+line-length = 88
+include = '\.pyi?$'
+exclude = '''
+/(\
+  \.git
+  | \.venv
+  | env
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+
+[tool.ruff]
+line-length = 88
