@@ -42,6 +42,14 @@ def preprocess(bgr, size=224):
     return np.transpose(x, (2, 0, 1))[None, ...].astype(np.float32)
 
 
+# Preprocess for ONNX (channels last)
+def preprocess_onnx(bgr, size=100):
+    x = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+    x = cv2.resize(x, (size, size)).astype(np.float32) / 255.0
+    # No normalization, keep channel last
+    return x[None, ...].astype(np.float32)
+
+
 def softmax(z):
     z = z - np.max(z)
     e = np.exp(z)
@@ -121,8 +129,10 @@ class TorchFER:
             )
         else:
             raise ValueError("arch must be resnet18 | deit-tiny (Mini-X: export ONNX)")
-        state = torch.load(ckpt, map_location="cpu")
-        if isinstance(state, dict):
+        state = torch.load(ckpt, map_location="cpu", weights_only=False)
+        if hasattr(state, "state_dict"):  # loaded a model instance
+            state = state.state_dict()
+        elif isinstance(state, dict):
             state = state.get("model", state.get("state_dict", state))
         model.load_state_dict(state, strict=False)
         model.eval()
@@ -610,8 +620,45 @@ def main():
             if x2 > x1 and y2 > y1:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 2)
                 face = frame[y1:y2, x1:x2]
-                logits = fer(preprocess(face, args.size))
+                # Use ONNX preprocess if model is OnnxFER
+                if isinstance(fer, OnnxFER):
+                    logits = fer(preprocess_onnx(face, 100))
+                else:
+                    logits = fer(preprocess(face, args.size))
                 p7 = softmax(logits)
+                # Only draw extra details if p7 is valid and will be mapped to p3
+                if p7 is not None and p7.sum() > 0:
+                    # Smooth & map for engagement
+                    p3_tmp = p7 @ EMO2ENG
+                    p3_tmp = p3_tmp / (p3_tmp.sum() + 1e-9)
+                    # Show top-3 emotions with probabilities
+                    top3_idx = np.argsort(p7)[::-1][:3]
+                    top3_labels = [f"{EMO[i]} ({p7[i]:.2f})" for i in top3_idx]
+                    top3_text = ", ".join(top3_labels)
+
+                    # Show engagement category and probability
+                    eng_idx = int(np.argmax(p3_tmp))
+                    eng_label = ENG3[eng_idx]
+                    eng_prob = float(p3_tmp[eng_idx])
+                    eng_text = f"{eng_label} ({eng_prob:.2f})"
+
+                    # Show model name
+                    model_text = fer.name if hasattr(fer, "name") else str(fer)
+
+                    # Compose multi-line label
+                    info_lines = [top3_text, eng_text, model_text]
+                    for i, line in enumerate(info_lines):
+                        y_offset = max(0, y1 - 12 - i * 28)
+                        cv2.putText(
+                            frame,
+                            line,
+                            (x1, y_offset),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            0.7,
+                            (0, 200, 0),
+                            2,
+                            cv2.LINE_AA,
+                        )
 
         # Smooth & map
         p7 = emo_s(p7)
