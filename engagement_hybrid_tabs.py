@@ -34,6 +34,18 @@ IM_MU = np.array([0.485, 0.456, 0.406], np.float32)
 IM_SD = np.array([0.229, 0.224, 0.225], np.float32)
 
 
+# Colors for engagement classes (BGR)
+ENG_COLORS = {
+    # Vibrant palette chosen by user
+    # Engaged: #2ECC71 -> BGR (113, 204, 46)
+    "Engaged": (113, 204, 46),
+    # Neutral: #FFA500 -> BGR (0, 165, 255)
+    "Neutral": (0, 165, 255),
+    # Disengaged: #FF4C4C -> BGR (76, 76, 255)
+    "Disengaged": (76, 76, 255),
+}
+
+
 # ----------------- Utils -----------------
 def preprocess(bgr, size=224):
     x = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -119,6 +131,93 @@ class TorchFER:
     def __init__(self, arch, ckpt, num_classes=7):
         assert torch is not None and timm is not None, "Install torch & timm"
         arch = arch.lower()
+        # Special-case: allow `arch=="ckpt"` to indicate the .pt contains a
+        # pickled nn.Module (a full model object). This enables loading custom
+        # models (e.g. Mini-X) that were saved as Python objects without a
+        # known timm architecture.
+        if arch == "ckpt" or arch == "checkpoint":
+            state = torch.load(ckpt, map_location="cpu", weights_only=False)
+            # If the checkpoint itself is a pickled nn.Module, use it directly
+            if isinstance(state, torch.nn.Module):
+                model = state
+            elif isinstance(state, dict):
+                # Some checkpoints wrap the actual model under 'model' or 'module'
+                cand = state.get("model", state.get("module", None))
+                if isinstance(cand, torch.nn.Module):
+                    model = cand
+                else:
+                    # Try to infer an architecture from the filename (e.g. mobilenet,
+                    # resnet, deit) and build a compatible model, then load state_dict.
+                    n = os.path.basename(ckpt).lower()
+                    built = None
+                    try:
+                        if "resnet" in n:
+                            built = timm.create_model(
+                                "resnet18", pretrained=False, num_classes=num_classes
+                            )
+                        elif "deit" in n or ("vit" in n and "tiny" in n):
+                            built = timm.create_model(
+                                "deit_tiny_patch16_224",
+                                pretrained=False,
+                                num_classes=num_classes,
+                            )
+                        elif "mobilenet" in n:
+                            # try timm first, fallback to torchvision if available
+                            try:
+                                built = timm.create_model(
+                                    "mobilenetv2_100",
+                                    pretrained=False,
+                                    num_classes=num_classes,
+                                )
+                            except Exception:
+                                try:
+                                    import torchvision.models as tv
+
+                                    built = tv.mobilenet_v2(
+                                        pretrained=False, num_classes=num_classes
+                                    )
+                                except Exception:
+                                    built = None
+                        # If we built a candidate model, load the dict
+                        if built is not None:
+                            sd = state
+                            # If checkpoint wraps keys under 'state_dict' or similar
+                            if isinstance(state, dict) and not any(
+                                isinstance(v, torch.nn.Module) for v in state.values()
+                            ):
+                                sd = state.get("state_dict", state)
+                            # Some checkpoints add a 'module.' prefix from DataParallel — handle that
+                            try:
+                                built.load_state_dict(sd, strict=False)
+                                model = built
+                            except Exception:
+                                # try to strip 'module.' prefixes
+                                new_sd = {
+                                    k.replace("module.", ""): v for k, v in sd.items()
+                                }
+                                built.load_state_dict(new_sd, strict=False)
+                                model = built
+                        else:
+                            raise ValueError(
+                                f"Checkpoint '{ckpt}' appears to contain only a state_dict and no pickled model object.\n"
+                                "I attempted to infer an architecture from the filename but couldn't.\n"
+                                "Options: (1) export your Mini-X model to ONNX and run with --backend onnx,\n"
+                                "(2) save the entire model as a pickled nn.Module (torch.save(model, path)),\n"
+                                "(3) rename the file to include a known arch token (resnet18 | deit | mobilenet) so the launcher can create a compatible model,\n"
+                                "or (4) provide the model class definition on PYTHONPATH so the pickled object can be loaded."
+                            )
+                    except Exception as e:
+                        raise ValueError(str(e))
+            else:
+                raise ValueError(
+                    f"Unexpected checkpoint contents for '{ckpt}' (type={type(state)})"
+                )
+            # Ensure the model is in eval mode
+            model.eval()
+            self.dev = "cuda" if torch.cuda.is_available() else "cpu"
+            self.model = model.to(self.dev)
+            self.name = f"TORCH:ckpt:{os.path.basename(ckpt)}"
+            return
         if arch == "resnet18":
             model = timm.create_model(
                 "resnet18", pretrained=False, num_classes=num_classes
@@ -128,7 +227,9 @@ class TorchFER:
                 "deit_tiny_patch16_224", pretrained=False, num_classes=num_classes
             )
         else:
-            raise ValueError("arch must be resnet18 | deit-tiny (Mini-X: export ONNX)")
+            raise ValueError(
+                "arch must be resnet18 | deit-tiny or 'ckpt' for a pickled model (Mini-X: export ONNX or save full model as torch.save(model, path))"
+            )
         state = torch.load(ckpt, map_location="cpu", weights_only=False)
         if hasattr(state, "state_dict"):  # loaded a model instance
             state = state.state_dict()
@@ -479,15 +580,37 @@ def render_demo_image(out_path="exports/demo_ui.png", size=(1280, 720)):
     panel_x = W - 320
     draw_panel(canvas, panel_x, 320)
     put(canvas, "Engagement (1-10)", (panel_x + 12, 72), 0.65, (255, 255, 255), 2)
-    gauge(canvas, panel_x + 160, 146, 60, (eng10 - 1) / 9)
+    # color gauge based on eng10 thresholds
+    if eng10 > 7.5:
+        gcol = ENG_COLORS.get("Engaged", (70, 185, 255))
+    elif eng10 < 4:
+        gcol = ENG_COLORS.get("Disengaged", (70, 185, 255))
+    else:
+        gcol = ENG_COLORS.get("Neutral", (70, 185, 255))
+    gauge(canvas, panel_x + 160, 146, 60, (eng10 - 1) / 9, gcol)
     put(canvas, f"{eng10:.1f} / 10", (panel_x + 120, 180), 0.8, (255, 255, 255), 2)
-    bar(canvas, panel_x + 12, 200, 296, 18, (eng10 - 1) / 9, (120, 220, 255))
+    # colored overall engagement bar (green/orange/red)
+    bar_fill = ENG_COLORS.get("Neutral")
+    if eng10 > 7.5:
+        bar_fill = ENG_COLORS.get("Engaged")
+    elif eng10 < 4:
+        bar_fill = ENG_COLORS.get("Disengaged")
+    bar(canvas, panel_x + 12, 200, 296, 18, (eng10 - 1) / 9, bar_fill)
 
     put(canvas, "3-Class", (panel_x + 12, 232), 0.6)
     for i, (lab, p) in enumerate(zip(ENG3, p3)):
         yy = 258 + i * 30
-        put(canvas, lab, (panel_x + 12, yy), 0.55, (220, 220, 220), 1)
-        bar(canvas, panel_x + 120, yy - 12, 180, 16, p, (255, 255, 255))
+        # label colored to match engagement class
+        put(
+            canvas,
+            lab,
+            (panel_x + 12, yy),
+            0.55,
+            ENG_COLORS.get(lab, (220, 220, 220)),
+            1,
+        )
+        fill = ENG_COLORS.get(lab, (255, 255, 255))
+        bar(canvas, panel_x + 120, yy - 12, 180, 16, p, fill)
 
     slim = timeline[:120]
     draw_timeline_box(canvas, slim, panel_x + 12, 360, 296, 90)
@@ -618,7 +741,6 @@ def main():
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(W_cam, x2), min(H_cam, y2)
             if x2 > x1 and y2 > y1:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 0), 2)
                 face = frame[y1:y2, x1:x2]
                 # Use ONNX preprocess if model is OnnxFER
                 if isinstance(fer, OnnxFER):
@@ -631,34 +753,97 @@ def main():
                     # Smooth & map for engagement
                     p3_tmp = p7 @ EMO2ENG
                     p3_tmp = p3_tmp / (p3_tmp.sum() + 1e-9)
-                    # Show top-3 emotions with probabilities
-                    top3_idx = np.argsort(p7)[::-1][:3]
-                    top3_labels = [f"{EMO[i]} ({p7[i]:.2f})" for i in top3_idx]
-                    top3_text = ", ".join(top3_labels)
 
-                    # Show engagement category and probability
+                    # Determine top-3 and preferred ordering (keeps top-3 by prob)
+                    sorted_by_prob = np.argsort(p7)[::-1].tolist()
+                    top3_by_prob = sorted_by_prob[:3]
+                    priority_map = {
+                        EMO.index(lbl): i
+                        for i, lbl in enumerate(["neutral", "anger", "fear"])
+                        if lbl in EMO
+                    }
+
+                    def sort_key(idx):
+                        if idx in priority_map:
+                            return (priority_map[idx], -float(p7[idx]))
+                        return (99, -float(p7[idx]))
+
+                    top3_idx = sorted(top3_by_prob, key=sort_key)
+
+                    # Prepare layout
+                    base_y = max(12, y1 - 12)
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    scale_name = 0.65
+                    thickness_name = 1
+
+                    # Engagement category and color
                     eng_idx = int(np.argmax(p3_tmp))
                     eng_label = ENG3[eng_idx]
                     eng_prob = float(p3_tmp[eng_idx])
                     eng_text = f"{eng_label} ({eng_prob:.2f})"
+                    eng_col = ENG_COLORS.get(eng_label, (220, 220, 220))
 
-                    # Show model name
-                    model_text = fer.name if hasattr(fer, "name") else str(fer)
+                    # Draw bounding box using engagement color
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), eng_col, 2)
 
-                    # Compose multi-line label
-                    info_lines = [top3_text, eng_text, model_text]
-                    for i, line in enumerate(info_lines):
-                        y_offset = max(0, y1 - 12 - i * 28)
+                    # Draw top-3 emotions (names grey, probs white)
+                    for j, idx in enumerate(top3_idx):
+                        y_j = max(0, base_y - j * 22)
+                        name = EMO[idx]
+                        prob_txt = f"({p7[idx]:.2f})"
                         cv2.putText(
                             frame,
-                            line,
-                            (x1, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX,
-                            0.7,
-                            (0, 200, 0),
-                            2,
+                            name,
+                            (x1, y_j),
+                            font,
+                            scale_name,
+                            (200, 200, 200),
+                            thickness_name,
                             cv2.LINE_AA,
                         )
+                        (nw, nh), _ = cv2.getTextSize(
+                            name, font, scale_name, thickness_name
+                        )
+                        cv2.putText(
+                            frame,
+                            prob_txt,
+                            (x1 + nw + 8, y_j),
+                            font,
+                            scale_name,
+                            (255, 255, 255),
+                            thickness_name,
+                            cv2.LINE_AA,
+                        )
+
+                    # Draw engagement text (colored) and model name (also colored)
+                    y_eng = max(0, base_y - len(top3_idx) * 22 - 6)
+                    cv2.putText(
+                        frame, eng_text, (x1, y_eng), font, 0.7, eng_col, 2, cv2.LINE_AA
+                    )
+                    model_text = fer.name if hasattr(fer, "name") else str(fer)
+                    y_mod = max(0, y_eng - 24)
+                    # Draw a small solid background for the model name for readability
+                    (mw, mh), mbase = cv2.getTextSize(model_text, font, 0.6, 1)
+                    pad_x = 8
+                    pad_y = 6
+                    rx1 = x1
+                    ry1 = max(0, y_mod - mh - pad_y)
+                    rx2 = x1 + mw + pad_x
+                    ry2 = y_mod + pad_y - 2
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (rx1, ry1), (rx2, ry2), (20, 28, 36), -1)
+                    cv2.addWeighted(overlay, 0.8, frame, 0.2, 0, frame)
+                    # Model name as solid white text (not colored by engagement)
+                    cv2.putText(
+                        frame,
+                        model_text,
+                        (x1 + 4, y_mod),
+                        font,
+                        0.6,
+                        (255, 255, 255),
+                        1,
+                        cv2.LINE_AA,
+                    )
 
         # Smooth & map
         p7 = emo_s(p7)
@@ -748,7 +933,14 @@ def main():
                 (255, 255, 255),
                 2,
             )
-            gauge(canvas, panel_x + 160, 146, 60, (eng10 - 1) / 9)
+            # color gauge based on eng10 thresholds
+            if eng10 > 7.5:
+                gcol = ENG_COLORS.get("Engaged", (70, 185, 255))
+            elif eng10 < 4:
+                gcol = ENG_COLORS.get("Disengaged", (70, 185, 255))
+            else:
+                gcol = ENG_COLORS.get("Neutral", (70, 185, 255))
+            gauge(canvas, panel_x + 160, 146, 60, (eng10 - 1) / 9, gcol)
             put(
                 canvas,
                 f"{eng10:.1f} / 10",
@@ -757,13 +949,29 @@ def main():
                 (255, 255, 255),
                 2,
             )
-            bar(canvas, panel_x + 12, 200, 296, 18, (eng10 - 1) / 9, (120, 220, 255))
+            # colored overall engagement bar (green/yellow/red)
+            bar_fill = ENG_COLORS.get("Neutral")
+            if eng10 > 7.5:
+                bar_fill = ENG_COLORS.get("Engaged")
+            elif eng10 < 4:
+                bar_fill = ENG_COLORS.get("Disengaged")
+            bar(canvas, panel_x + 12, 200, 296, 18, (eng10 - 1) / 9, bar_fill)
 
             put(canvas, "3-Class", (panel_x + 12, 232), 0.6)
             for i, (lab, p) in enumerate(zip(ENG3, p3)):
                 yy = 258 + i * 30
-                put(canvas, lab, (panel_x + 12, yy), 0.55, (220, 220, 220), 1)
-                bar(canvas, panel_x + 120, yy - 12, 180, 16, p, (255, 255, 255))
+                # label colored to match engagement class
+                put(
+                    canvas,
+                    lab,
+                    (panel_x + 12, yy),
+                    0.55,
+                    ENG_COLORS.get(lab, (220, 220, 220)),
+                    1,
+                )
+                # color bar per engagement class
+                fill = ENG_COLORS.get(lab, (255, 255, 255))
+                bar(canvas, panel_x + 120, yy - 12, 180, 16, p, fill)
 
             vals = list(timeline)
             take = max(1, len(vals) // 120)
