@@ -19,13 +19,13 @@ EMO = ["surprise", "fear", "disgust", "happiness", "sadness", "anger", "neutral"
 ENG3 = ["Engaged", "Neutral", "Disengaged"]
 EMO2ENG = np.array(
     [
-        [0.70, 0.25, 0.05],  # surprise
-        [0.10, 0.25, 0.65],  # fear
-        [0.05, 0.15, 0.80],  # disgust
-        [0.85, 0.10, 0.05],  # happiness
-        [0.05, 0.15, 0.80],  # sadness
-        [0.05, 0.15, 0.80],  # anger
-        [0.35, 0.55, 0.10],  # neutral
+        [0.70, 0.25, 0.05],  # surprise engage
+        [0.10, 0.25, 0.65],  # fear disengage
+        [0.05, 0.15, 0.80],  # disgust disengage
+        [0.85, 0.10, 0.05],  # happiness engage
+        [0.05, 0.15, 0.80],  # sadness disengage
+        [0.05, 0.15, 0.80],  # anger disengage
+        [0.35, 0.55, 0.10],  # neutral neutral
     ],
     dtype=np.float32,
 )
@@ -136,7 +136,28 @@ class TorchFER:
         # models (e.g. Mini-X) that were saved as Python objects without a
         # known timm architecture.
         if arch == "ckpt" or arch == "checkpoint":
-            state = torch.load(ckpt, map_location="cpu", weights_only=False)
+            try:
+                state = torch.load(ckpt, map_location="cpu", weights_only=False)
+            except AttributeError as e:
+                # This commonly happens when the checkpoint was pickled from a
+                # script where the model class lived in __main__ (for example
+                # 'HybridMiniXMobile') and that class definition isn't
+                # importable in the current process. Provide a clear, actionable
+                # message rather than allowing the raw pickle error to bubble.
+                raise ValueError(
+                    "Failed to unpickle model from checkpoint.\n"
+                    f"Underlying error: {e}\n\n"
+                    "Likely cause: the class used to create the model (e.g. 'HybridMiniXMobile')\n"
+                    "is not available/importable in this Python process.\n\n"
+                    "How to fix:\n"
+                    " 1) Run this script in the same project where the model class is defined,\n"
+                    "    or copy the Python file that defines the class into this project so it is importable.\n"
+                    " 2) If you can run the original training environment, re-save as a state_dict:\n"
+                    "       torch.save(model.state_dict(), 'model_state.pt')\n"
+                    "    Then load by creating the model architecture here and calling load_state_dict(...).\n"
+                    " 3) Export the model to ONNX in the original environment and use the ONNX file here.\n\n"
+                    "To inspect the checkpoint locally, run: python scripts/inspect_checkpoint.py <path-to-pt>\n"
+                )
             # If the checkpoint itself is a pickled nn.Module, use it directly
             if isinstance(state, torch.nn.Module):
                 model = state
