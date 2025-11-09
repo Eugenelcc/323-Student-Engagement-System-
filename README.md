@@ -1,133 +1,263 @@
 # Student Engagement Monitor — UI Demo
 
-A small demo that renders a webcam-based student engagement UI. A `--demo` mode is provided so you can preview the UI without a camera or models — it draws a representative static frame and writes a PNG.
+Facial expression recognition for a student engagement system (CSCI 323).
 
-## Features
+This repository contains code and notebooks for a Student Engagement Monitor. It includes:
+- a live webcam UI and export utilities (CSV / PNG / JSON),
+- helper scripts to inspect model checkpoints,
+- and a `--demo` mode that renders a static representative UI frame to a PNG without requiring a camera or ML models.
 
-- Demo mode to render a representative UI frame to an image file (no camera or models required).
-- Cross-platform usage examples (PowerShell and POSIX shells).
-- Formatting tooling configured via `pyproject.toml` (Black / isort / Ruff).
+Repository summary
+- Description: Facial expression recognition for student engagement system for CSCI 323
+- Primary languages: Jupyter Notebook, Python
+
+## Overview (short)
+- Demo mode (`--demo`) to preview the UI without models or webcam.
+- Three model notebooks are included in the repository to train / inspect / evaluate models (see the notebooks or root directory for their .ipynb files).
+- Focused instructions on creating a virtual environment, installing dependencies, and running the demo or notebooks locally.
 
 ## Prerequisites
-
 - Python 3.8+ recommended
-- Optional: virtual environment (venv, virtualenv)
-- Developer tools (optional): black, isort, ruff
+- Optional: virtual environment (venv / virtualenv)
+- Optional developer tools: black, isort, ruff, jupyterlab
 
-## Installation (recommended)
+## Quickstart — create & activate a venv
+Windows (PowerShell)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
-1. Create and activate a virtual environment (optional but recommended)
+macOS / Linux
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-   - Windows (PowerShell)
-     ```powershell
-     python -m venv .venv
-     .\.venv\Scripts\Activate.ps1
-     ```
-   - macOS / Linux
-     ```bash
-     python -m venv .venv
-     source .venv/bin/activate
-     ```
+## Install dependencies
+1. If the repository includes a requirements.txt:
+```bash
+pip install -r requirements.txt
+```
 
-2. Install dependencies
-   - If the repo contains a requirements file:
-     ```bash
-     pip install -r requirements.txt
-     ```
-   - Otherwise, install the packages you need (example):
-     ```bash
-     pip install opencv-python numpy pillow
-     ```
+2. If there is no requirements.txt, install the likely needed packages (examples):
+```bash
+pip install opencv-python numpy pillow mediapipe jupyterlab
+# Optional: if you work with PyTorch models
+pip install torch torchvision timm
+```
 
-## Running the demo
+3. (Optional) Create a requirements.txt from your environment for repeatable installs:
+```bash
+pip freeze > requirements.txt
+```
 
-The demo mode writes a static representative UI frame to a PNG file and does not load ML models or use the camera.
+## Running the demo (no camera, no models)
+The demo mode draws a static representative UI frame and writes a PNG file. It is intended to preview the UI and verify export paths.
 
-- PowerShell
+Windows (PowerShell)
+```powershell
+.\.venv\Scripts\Activate.ps1
+python engagement_hybrid_tabs.py --demo
+python engagement_hybrid_tabs.py --demo --demo-out .\exports\demo_ui.png
+```
 
-  ````powershell
-  # Student Engagement Monitor
+macOS / Linux
+```bash
+source .venv/bin/activate
+python engagement_hybrid_tabs.py --demo
+python engagement_hybrid_tabs.py --demo --demo-out ./exports/demo_ui.png
+```
 
-  This repository contains a responsive demo UI and runtime for a Student Engagement Monitor.
-  It runs a facial-expression model (ONNX or PyTorch) to predict seven emotions, maps those
-  emotions to a three-class engagement label (Engaged / Neutral / Disengaged), and computes
-  a single interpretable 1–10 engagement score for visualization and analytics.
+Notes:
+- Demo mode does not load ML models or open a webcam — it only writes a static PNG.
+- Ensure the `exports/` directory exists or provide an existing path via `--demo-out`.
 
-  ## Key features
-  - Live webcam UI with responsive layout and export options (CSV / PNG / JSON).
-  - Demo mode (`--demo`) that renders a static representative UI frame without models or camera.
-  - Support for ONNX and PyTorch backends; flexible handling of various model checkpoint formats.
-  - Utility script: `scripts/inspect_checkpoint.py` to examine `.pt` files locally.
+## Running the app with camera / models
+- Place model files (e.g., `.pt`) into the `models/` directory if present.
+- Launch the application:
+```bash
+python run.py
+```
+- For PyTorch `.pt` files: prefer saving and loading `state_dict`s for portability. If you run into torch.load pickling errors, re-export the checkpoint as a `state_dict` in the environment where the model was trained.
 
-  ## Quick start (Windows PowerShell)
-  ```powershell
-  python -m venv .venv
-  .\.venv\Scripts\Activate.ps1
-  pip install -r requirements.txt   # if present
-  pip install opencv-python numpy mediapipe
-  # Optional: for PyTorch models
-  pip install torch torchvision timm
-  # Optional: for ONNX
-  pip install onnxruntime
-  ````
+## Notebooks / model files
+This repo contains three model notebooks (.ipynb) that cover training, evaluation, and/or inference workflows. Open them with JupyterLab or Jupyter Notebook:
 
-  Run the demo (no camera, no models):
+```bash
+jupyter lab
+# or
+jupyter notebook
+```
 
-  ```powershell
-  python engagement_hybrid_tabs.py --demo
-  python engagement_hybrid_tabs.py --demo --demo-out .\exports\demo_ui.png
-  ```
+Tips:
+- Run cells in order; if a notebook expects model checkpoints, put them in the `models/` directory or update the notebook paths.
+- To convert a notebook to a script:
+```bash
+jupyter nbconvert --to script path/to/notebook.ipynb
+```
 
-  Run the app with discovered models (from `models/`):
+If you'd like the README to list the exact filenames of the three notebooks, tell me their paths and I'll add them.
 
-  ```powershell
-  python run.py
-  ```
+## How emotions map to engagement (brief)
+- The model predicts probabilities for 7 emotion classes (surprise, fear, disgust, happiness, sadness, anger, neutral).
+- A mapping in the code converts the 7-class probabilities to a 3-class engagement label (Engaged / Neutral / Disengaged) and computes a 1–10 engagement score. Both label and score are smoothed to reduce flicker.
+- Tweak `EMO2ENG`, `W_ENG10`, or smoothing parameters in `engagement_hybrid_tabs.py` if you want different mappings or smoothing.
 
-  ## Models: ONNX vs PyTorch `.pt`
+## Formatting & development workflow
+Use Black / isort / Ruff for consistent style:
+```bash
+pip install black isort ruff
+black .
+isort .
+ruff check .
+```
+Consider adding a `pre-commit` config to enforce formatting on commit.
 
-  - ONNX: portable and recommended for sharing models across environments. `run.py` will load `.onnx` files directly.
-  - PyTorch `.pt`: may be a pickled Module (torch.save(model, path)) or a `state_dict` (torch.save(model.state_dict(), path)). Pickled Modules require the original class definition to be importable when loading.
+## Suggested repo updates (I can prepare these)
+- Add a `requirements.txt` listing runtime dependencies.
+- Add a `pre-commit` configuration to enforce formatting automatically.
+- Add a CONTRIBUTING.md describing the development workflow.
+- Add a LICENSE (e.g., MIT) if you want to make licensing explicit.
 
-  ### Common checkpoint issue: "Can't get attribute 'HybridMiniXMobile'"
+## Contributing
+- Open issues for bugs or feature requests.
+- Create pull requests describing changes and testing steps.
+- If you want me to add the exact notebook filenames, a requirements.txt, or a pre-commit config, tell me and I will prepare the changes.
 
-  - Symptom: torch.load fails with an AttributeError about `HybridMiniXMobile` when launching the app.
-  - Cause: the `.pt` file is a pickled model instance whose class is not available/importable in this runtime (pickle needs the class definition to reconstruct the object).
-  - Fixes:
-    1. Run the app in the same project/environment where `HybridMiniXMobile` is defined, or copy the class source into this repo so it can be imported.
-    2. Re-save the model as a `state_dict` in the original environment and then instantiate and load it here:
-       ```python
-       torch.save(model.state_dict(), 'model_state.pt')
-       model.load_state_dict(torch.load('model_state.pt', map_location='cpu'))
-       ```
-    3. Export the model to ONNX in the original environment and drop the `.onnx` file into `models/`.
+## License
+Add your preferred license file (e.g., MIT) to the repository if you haven't already.
 
-  Use the inspect helper to decide which route to take:
+## Contact
+Maintained by @Eugenelcc — open an issue or create a PR to propose changes.# Student Engagement Monitor — UI Demo
 
-  ```powershell
-  python scripts/inspect_checkpoint.py models\raf_affectnet_balanced_HybridMiniXMobile.pt
-  ```
+Facial expression recognition for a student engagement system (CSCI 323).
 
-  ## How emotions are mapped to engagement (brief)
+This repository contains code and notebooks for a Student Engagement Monitor. It includes:
+- a live webcam UI and export utilities (CSV / PNG / JSON),
+- helper scripts to inspect model checkpoints,
+- and a `--demo` mode that renders a static representative UI frame to a PNG without requiring a camera or ML models.
 
-  - The model predicts 7 emotion probabilities p7 for: surprise, fear, disgust, happiness, sadness, anger, neutral.
-  - A fixed 7×3 matrix `EMO2ENG` maps p7 → p3 (Engaged, Neutral, Disengaged) via matrix multiplication and normalization.
-  - The label is `argmax(p3)`. The numeric score is `eng10 = clip(W_ENG10 · p7, 1, 10)`. Both are smoothed with an EMA to reduce flicker.
+Repository summary
+- Description: Facial expression recognition for student engagement system for CSCI 323
+- Primary languages: Jupyter Notebook, Python
 
-  ## Configuration & development
+## Overview (short)
+- Demo mode (`--demo`) to preview the UI without models or webcam.
+- Three model notebooks are included in the repository to train / inspect / evaluate models (see the notebooks or root directory for their .ipynb files).
+- Focused instructions on creating a virtual environment, installing dependencies, and running the demo or notebooks locally.
 
-  - Tweak `EMO2ENG` or `W_ENG10` at the top of `engagement_hybrid_tabs.py` to change mapping or scoring.
-  - Adjust smoothing with the `--ema` flag when launching the app.
-  - Formatting: use Black / isort / Ruff for consistent style.
+## Prerequisites
+- Python 3.8+ recommended
+- Optional: virtual environment (venv / virtualenv)
+- Optional developer tools: black, isort, ruff, jupyterlab
 
-  ## Support
+## Quickstart — create & activate a venv
+Windows (PowerShell)
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
 
-  - If you'd like, I can add: ONNX export helpers, a minimal shim for `HybridMiniXMobile` for testing, or CI/pre-commit config. Tell me which and I will prepare changes.
+macOS / Linux
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
 
-  ## License
+## Install dependencies
+1. If the repository includes a requirements.txt:
+```bash
+pip install -r requirements.txt
+```
 
-  Add your preferred license (e.g., MIT) or keep the existing `LICENSE` file.
+2. If there is no requirements.txt, install the likely needed packages (examples):
+```bash
+pip install opencv-python numpy pillow mediapipe jupyterlab
+# Optional: if you work with PyTorch models
+pip install torch torchvision timm
+```
 
-  ***
+3. (Optional) Create a requirements.txt from your environment for repeatable installs:
+```bash
+pip freeze > requirements.txt
+```
 
-  Generated README — tell me if you want a shorter tutorial version or a slide-ready summary.
+## Running the demo (no camera, no models)
+The demo mode draws a static representative UI frame and writes a PNG file. It is intended to preview the UI and verify export paths.
+
+Windows (PowerShell)
+```powershell
+.\.venv\Scripts\Activate.ps1
+python engagement_hybrid_tabs.py --demo
+python engagement_hybrid_tabs.py --demo --demo-out .\exports\demo_ui.png
+```
+
+macOS / Linux
+```bash
+source .venv/bin/activate
+python engagement_hybrid_tabs.py --demo
+python engagement_hybrid_tabs.py --demo --demo-out ./exports/demo_ui.png
+```
+
+Notes:
+- Demo mode does not load ML models or open a webcam — it only writes a static PNG.
+- Ensure the `exports/` directory exists or provide an existing path via `--demo-out`.
+
+## Running the app with camera / models
+- Place model files (e.g., `.pt`) into the `models/` directory if present.
+- Launch the application:
+```bash
+python run.py
+```
+- For PyTorch `.pt` files: prefer saving and loading `state_dict`s for portability. If you run into torch.load pickling errors, re-export the checkpoint as a `state_dict` in the environment where the model was trained.
+
+## Notebooks / model files
+This repo contains three model notebooks (.ipynb) that cover training, evaluation, and/or inference workflows. Open them with JupyterLab or Jupyter Notebook:
+
+```bash
+jupyter lab
+# or
+jupyter notebook
+```
+
+Tips:
+- Run cells in order; if a notebook expects model checkpoints, put them in the `models/` directory or update the notebook paths.
+- To convert a notebook to a script:
+```bash
+jupyter nbconvert --to script path/to/notebook.ipynb
+```
+
+If you'd like the README to list the exact filenames of the three notebooks, tell me their paths and I'll add them.
+
+## How emotions map to engagement (brief)
+- The model predicts probabilities for 7 emotion classes (surprise, fear, disgust, happiness, sadness, anger, neutral).
+- A mapping in the code converts the 7-class probabilities to a 3-class engagement label (Engaged / Neutral / Disengaged) and computes a 1–10 engagement score. Both label and score are smoothed to reduce flicker.
+- Tweak `EMO2ENG`, `W_ENG10`, or smoothing parameters in `engagement_hybrid_tabs.py` if you want different mappings or smoothing.
+
+## Formatting & development workflow
+Use Black / isort / Ruff for consistent style:
+```bash
+pip install black isort ruff
+black .
+isort .
+ruff check .
+```
+Consider adding a `pre-commit` config to enforce formatting on commit.
+
+## Suggested repo updates (I can prepare these)
+- Add a `requirements.txt` listing runtime dependencies.
+- Add a `pre-commit` configuration to enforce formatting automatically.
+- Add a CONTRIBUTING.md describing the development workflow.
+- Add a LICENSE (e.g., MIT) if you want to make licensing explicit.
+
+## Contributing
+- Open issues for bugs or feature requests.
+- Create pull requests describing changes and testing steps.
+- If you want me to add the exact notebook filenames, a requirements.txt, or a pre-commit config, tell me and I will prepare the changes.
+
+## License
+Add your preferred license file (e.g., MIT) to the repository if you haven't already.
+
+## Contact
+Maintained by @Eugenelcc — open an issue or create a PR to propose changes.
