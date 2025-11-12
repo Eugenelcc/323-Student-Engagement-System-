@@ -257,7 +257,7 @@ Consider adding a `pre-commit` config to enforce formatting on commit.
 - If you want me to add the exact notebook filenames, a requirements.txt, or a pre-commit config, tell me and I will prepare the changes.
 
 ## License
-Add your preferred license file (e.g., MIT) to the repository if you haven't already.
+MIT License 
 
 ## Contact
 Maintained by @Eugenelcc — open an issue or create a PR to propose changes.
